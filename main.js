@@ -26,7 +26,7 @@ class Vector2{
         this.x = x;
         this.y = y;
     }
-    sub(that) {return {x: this.x - that.x, y: this.y - that.y}}
+    sub(that) {return new Vector2(this.x - that.x, this.y - that.y)}
 
     add(that) {
         return new Vector2(this.x + that.x, this.y + that.y)
@@ -35,6 +35,8 @@ class Vector2{
         return new Vector2(this.x * that.x, this.y * that.y)
     }
     scale(that) {return new Vector2(this.x * that,  this.y * that)}
+    dist(that){return Math.sqrt(((that.y - this.y)**2) + ((that.x - this.x)**2))};
+    normalize(){return this.scale(1/this.dist(new Vector2(0, 0)));}
     rotate(deg){
         let c = Math.cos(deg);
         let s = Math.sin(deg);
@@ -44,18 +46,20 @@ class Vector2{
             x*c - y*s, x*s + y*c
         )
     }
-    dist(that){return Math.sqrt(((that.y - this.y)**2) + ((that.x - this.x)**2))};
     block_index(){return new Vector2(Math.floor(this.x), Math.floor(this.y))}
 }
 class Player {
     position;
     dir;
+    dir_vector;
+    plane;
     fov = Math.PI/2;
-    velocity = new Vector2(0, 0);
     normal_speed = 0.02;
+    turning_speed = 0.04;
     constructor (position, dir){
         this.position = position;
         this.dir = dir;
+        this.plane = new Vector2(0, Math.tan(this.fov/2));
     }
 }
 
@@ -63,8 +67,8 @@ const ctx = canvas.getContext("2d");
 canvas.width = 320;
 canvas.height = 200;
 canvas.style.imageRendering = "pixelated";
-let COLS = 10;
-let ROWS = 10;
+let COLS;
+let ROWS;
 let STATE = {
     keys: {
         a: false, 
@@ -91,20 +95,25 @@ function draw_line(p1, p2, color) {
     ctx.lineTo(p2.x, p2.y); 
     ctx.stroke();
 }
-function cast_ray(orig, angle){
-    let pos = {...orig};
-    let delta = new Vector2(Math.cos(angle), Math.sin(angle))
+function cast_ray(x){
+    const Player = STATE.Player;
+    let pos = {...Player.position};
+    const dx = x/(canvas.width/2) - 1;
+    let delta = Player.dir_vector.add(Player.plane.scale(dx)); 
     let step = new Vector2();
     let side_dist = new Vector2();
     let current_block = new Vector2(Math.floor(pos.x), Math.floor(pos.y))
+
+    // let ray_length_for_unit_in_axis = new Vector2(
+    //     Math.sqrt(1 + ((delta.y * delta.y) / (delta.x * delta.x))),
+    //     Math.sqrt(1 + ((delta.x* delta.x) / (delta.y * delta.y)))
+    // )
+    // SIMPLIFIED (NO CLUE HOW IT WORKS)
     let ray_length_for_unit_in_axis = new Vector2(
-        Math.sqrt(1 + ((delta.y * delta.y) / (delta.x * delta.x))),
-        Math.sqrt(1 + ((delta.x* delta.x) / (delta.y * delta.y)))
+     Math.abs(1 / delta.x),
+     Math.abs(1 / delta.y)
     )
 
-    /* (todo): Can be replaced with this to make it optimal;
-     * deltaDistX = abs(1 / rayDirX)
-     * deltaDistY = abs(1 / rayDirY) */
 
     if(delta.x < 0){
         step.x = -1;
@@ -145,26 +154,33 @@ function cast_ray(orig, angle){
         }
         hit = STATE.Scene[current_block.y][current_block.x];
     }
+    let perp_dist;
+    if (side === "VERTICAL") {
+        perp_dist = (current_block.x - pos.x + (1 - step.x) / 2) / delta.x;
+    } else {
+        perp_dist = (current_block.y - pos.y + (1 - step.y) / 2) / delta.y;
+    }
+    let hit_pos = {};
+    if (side === "VERTICAL") {
+        hit_pos.y = pos.y + perp_dist * delta.y;
+        hit_pos.x = current_block.x;
+    } else {
+        hit_pos.x = pos.x + perp_dist * delta.x;
+        hit_pos.y = current_block.y;
+    }
     return {
-        hit : orig.add(delta.scale(dist)),
-        block : type === "WALL" ? current_block : null,
+        hit: hit_pos,
         dist,
+        perp_dist,
         side,
+        block : type === "WALL" ? current_block : null,
     }
 
 }
 addEventListener("keyup", (e) => {
     if(Object.keys(STATE.keys).includes(e.key.toLowerCase())) STATE.keys[e.key.toLowerCase()] = false;
-    switch(e.key){
-        case "ArrowUp":
-        case "ArrowDown":
-        case "ArrowLeft":
-        case "ArrowRight":
-            STATE.Player.velocity.x = 0;
-            STATE.Player.velocity.y = 0;
-            break;
-    }
 });
+
 addEventListener("keydown", (e) => {
     const Player = STATE.Player;
     if(Object.keys(STATE.keys).includes(e.key.toLowerCase())) STATE.keys[e.key.toLowerCase()] = true;
@@ -173,16 +189,11 @@ addEventListener("keydown", (e) => {
 function minimap(w, h){
     ctx.save()
     ctx.scale(w/COLS, h/ROWS);
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 0.5;
 
     let Player = STATE.Player;
-    // for(let i = 0; i <= COLS; i++){
-    //     draw_line({x: i, y: 0}, {x: i, y: ROWS}, "red");
-    //     draw_line({x: 0, y: i}, {x: COLS, y: i}, "red");
-    // }
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, COLS, ROWS);
-    // draw_line(Player.position, Player.position.add(Player.velocity.rotate(Player.dir + Math.PI/2).scale(10)), "blue")
     let P = STATE.Player;
     // all the blocks on the minimap
     for(let row = 0; row < ROWS; ++row){
@@ -192,19 +203,11 @@ function minimap(w, h){
         }
     }
 
-    // the fov ends
-    draw_line(P.position, {
-        x: P.position.x + Math.cos(P.dir - P.fov/2)*2,
-        y: P.position.y + Math.sin(P.dir - P.fov/2)*2
-    }, "blue")
-    draw_line(P.position, {
-        x: P.position.x + Math.cos(P.dir + P.fov/2)*2,
-        y: P.position.y + Math.sin(P.dir + P.fov/2)*2
-    }, "blue")
-
-    for(hit of STATE.ray_hits){
-        draw_circle(hit.hit, 0.1,"blue");  
-    }
+    // the fov 
+    draw_circle(P.position, 0.2, "red")
+    draw_circle(P.position.add(P.dir_vector), 0.2, "red")
+    draw_circle(P.position.add(P.dir_vector.add(P.plane)), 0.2, "cyan")
+    draw_circle(P.position.add(P.dir_vector.add(P.plane.scale(-1))), 0.2, "cyan")
     ctx.restore();
 }
 function render_floor(){
@@ -213,20 +216,13 @@ function render_floor(){
     const image_data = ctx.createImageData(canvas.width, canvas.height);
     const buf = image_data.data; // Uint8ClampedArray, 4 bytes per pixel
     let start = (canvas.height)/2;
-    let max_vision = 1.5;
-    const left_fov = new Vector2(Math.cos(Player.dir - Player.fov/2), Math.sin(Player.dir - Player.fov/2))
-    const right_fov = new Vector2(Math.cos(Player.dir + Player.fov/2), Math.sin(Player.dir + Player.fov/2))
-
-    for(let y = start; y <= canvas.height; y += 1){
+    let max_vision = 1;
+    const left_fov = Player.dir_vector.add(Player.plane.scale(-1)).normalize();
+    const right_fov = Player.dir_vector.add(Player.plane).normalize();
+    for(let y = start + 1; y <= canvas.height; y += 1){
         let ray_dist = ((start) / (y - start)) 
-        let left_point = {
-            x: Player.position.x + left_fov.x * ray_dist,
-            y: Player.position.y + left_fov.y * ray_dist
-        }
-        let right_point = {
-            x: Player.position.x + right_fov.x * ray_dist,
-            y: Player.position.y + right_fov.y * ray_dist
-        }
+        let left_point = Player.position.add(left_fov.scale(ray_dist)); 
+        let right_point = Player.position.add(right_fov.scale(ray_dist)); 
         // [left_point -> right_point] <=> [(x,y0) -> (x+w, y)];
         let brightness_coeff = max_vision/ray_dist; 
         for(let x = 0; x < canvas.width; x += 1){
@@ -252,14 +248,14 @@ function render_floor(){
     ctx.putImageData(image_data, 0, 0);
 }
 function render_walls(){
-    for(let i = 0; i < STATE.ray_hits.length; i++){
+    for(let i = 0; i < canvas.width; i++){
         let hit = STATE.ray_hits[i];
         if(hit.block){
             const texture = TEXTURES.Walls[STATE.Scene[hit.block.y][hit.block.x]].img;
-            let texture_x = hit.side == "HORIZONTAL" ? hit.hit.x - hit.block.x : hit.block.y + 1 - hit.hit.y;
+            let texture_x = hit.side == "HORIZONTAL" ? hit.hit.x - hit.block.x : hit.hit.y - hit.block.y;
             texture_x *= texture.width;
-
-            const wall_height = Math.ceil((canvas.height * 0.7) / hit.dist);
+            // Magic Number <0.7>, I DON'T KNOW WHY THE FUCK IT WORKS.
+            const wall_height = Math.ceil((canvas.height * 0.7) / hit.perp_dist);
             const x = i; 
             const y = canvas.height/2 - wall_height/2;
             ctx.drawImage(texture, texture_x, 0, 1, texture.height, x, y, 1, wall_height)
@@ -270,7 +266,7 @@ function render_walls(){
             }
 
             // darken based on distance
-            let max_vision = 4;
+            let max_vision = 2;
             let darkness_coeff = Math.min(hit.dist/max_vision, 0.8); 
             ctx.fillStyle = `rgba(0, 0, 0, ${darkness_coeff})`;
             ctx.fillRect(x, y, 1, wall_height);
@@ -288,39 +284,43 @@ function game_loop(ctime){
     ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height);
 
     let Player = STATE.Player;
+    let new_pos;
     for([key, value] of Object.entries(STATE.keys)){
-        if(key == "arrowup" && value){
-            Player.velocity.y = -Player.normal_speed * 60 * delta;
-        }
-        if(key == "arrowdown" && value){
-            Player.velocity.y = Player.normal_speed* 60 * delta;
-        }
-        if(key == "arrowleft" && value){
-            Player.velocity.x = -Player.normal_speed* 60 * delta;
-        }
-        if(key == "arrowright" && value){
-            Player.velocity.x = Player.normal_speed* 60 * delta;
-        }
         if(key == "a" && value){
-            Player.dir-= 0.06 * delta * 60;
+            Player.dir -= Player.turning_speed * delta * 60;
+            Player.plane = Player.plane.rotate(Player.turning_speed * delta * -60);
         }
         if(key == "d" && value){
-            Player.dir += 0.06 * delta * 60;
+            Player.dir += Player.turning_speed * delta * 60;
+            Player.plane = Player.plane.rotate(Player.turning_speed * delta * 60);
+        }
+        Player.dir_vector = new Vector2(Math.cos(Player.dir), Math.sin(Player.dir));
+        if(key == "arrowup" && value){
+            new_pos = Player.position.add(Player.dir_vector.scale(Player.normal_speed * 60 * delta))
+        }
+        if(key == "arrowdown" && value){
+            new_pos = Player.position.sub(Player.dir_vector.scale(Player.normal_speed * 60 * delta))
+        }
+        if(key == "arrowleft" && value){
+            new_pos = Player.position.add(Player.dir_vector.rotate(-Math.PI/2).scale(Player.normal_speed * 60 * delta))
+        }
+        if(key == "arrowright" && value){
+            new_pos = Player.position.add(Player.dir_vector.rotate(Math.PI/2).scale(Player.normal_speed * 60 * delta))
         }
     }
-    let new_pos = Player.position.add(Player.velocity.rotate(Player.dir + Math.PI/2));
-    let new_pos_block = new_pos.block_index();
-    if(0 <= new_pos.x && 0 <= new_pos.y && new_pos_block.y < ROWS &&  new_pos_block.x < COLS && !STATE.Scene[new_pos_block.y][new_pos_block.x]){
-        Player.position = new_pos;
+    if(new_pos){
+        let new_pos_block = new_pos.block_index();
+        if(0 <= new_pos.x && 0 <= new_pos.y && new_pos_block.y < ROWS &&  new_pos_block.x < COLS && !STATE.Scene[new_pos_block.y][new_pos_block.x]){
+            Player.position = new_pos;
+        }
     }
 
     // Ray casting
     STATE.ray_hits = [];
-    for(let angle = Player.dir - Player.fov/2; angle < Player.dir + Player.fov/2; angle += Player.fov / canvas.width) {
-        let res = cast_ray(Player.position, angle);
-        res.dist = res.dist * Math.cos(Player.dir - angle);
+    for(let x = 0; x < canvas.width; x++) {
+        let res = cast_ray(x);
         if(res){
-            STATE.ray_hits.push({angle, ...res})
+            STATE.ray_hits.push(res)
         }
         else {
             throw new Error("Ray casting failed for some reason.")
