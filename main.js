@@ -10,11 +10,13 @@ class Sprite{
         })
     }
 }
+
 let TEXTURES_COLLECTION = [
     new Sprite("floor.png"),
     new Sprite("wall.png"),
     new Sprite("wall-2.png"),
 ];
+
 let TEXTURES = {
     Floor: null,
     Walls: []
@@ -103,18 +105,10 @@ function cast_ray(x){
     let step = new Vector2();
     let side_dist = new Vector2();
     let current_block = new Vector2(Math.floor(pos.x), Math.floor(pos.y))
-
-    // let ray_length_for_unit_in_axis = new Vector2(
-    //     Math.sqrt(1 + ((delta.y * delta.y) / (delta.x * delta.x))),
-    //     Math.sqrt(1 + ((delta.x* delta.x) / (delta.y * delta.y)))
-    // )
-    // SIMPLIFIED (NO CLUE HOW IT WORKS)
     let ray_length_for_unit_in_axis = new Vector2(
-     Math.abs(1 / delta.x),
-     Math.abs(1 / delta.y)
+        Math.sqrt(1 + ((delta.y * delta.y) / (delta.x * delta.x))),
+        Math.sqrt(1 + ((delta.x* delta.x) / (delta.y * delta.y)))
     )
-
-
     if(delta.x < 0){
         step.x = -1;
         side_dist.x = (pos.x - current_block.x) * ray_length_for_unit_in_axis.x;
@@ -169,11 +163,12 @@ function cast_ray(x){
         hit_pos.y = current_block.y;
     }
     return {
-        hit: hit_pos,
+        hit_text_cords: hit_pos,
         dist,
         perp_dist,
         side,
         block : type === "WALL" ? current_block : null,
+        hit_cords: Player.position.add(delta.normalize().scale(dist)),
     }
 
 }
@@ -208,6 +203,10 @@ function minimap(w, h){
     draw_circle(P.position.add(P.dir_vector), 0.2, "red")
     draw_circle(P.position.add(P.dir_vector.add(P.plane)), 0.2, "cyan")
     draw_circle(P.position.add(P.dir_vector.add(P.plane.scale(-1))), 0.2, "cyan")
+    for(hit of STATE.ray_hits){
+        draw_circle(hit.hit_cords, 0.2, "cyan")
+    } 
+    draw_circle(P.position.add(P.dir_vector.add(P.plane)), 0.2, "cyan")
     ctx.restore();
 }
 function render_floor(){
@@ -224,8 +223,9 @@ function render_floor(){
         let left_point = Player.position.add(left_fov.scale(ray_dist)); 
         let right_point = Player.position.add(right_fov.scale(ray_dist)); 
         // [left_point -> right_point] <=> [(x,y0) -> (x+w, y)];
-        let brightness_coeff = max_vision/ray_dist; 
+        let brightness_coeff = ((y - start)/start) * max_vision; 
         for(let x = 0; x < canvas.width; x += 1){
+            let brightness = brightness_coeff * Math.abs(Math.abs(canvas.width/2 - x) / (canvas.width/2) - 1) ** 3
             let t = x/canvas.width;
             let world_x = left_point.x + (right_point.x - left_point.x) * t;
             let world_y = left_point.y + (right_point.y - left_point.y) * t;
@@ -236,11 +236,11 @@ function render_floor(){
             const tex_pixel_index = (ty * floor.width + tx) * 4;
             const scene_pixel_index = (y * canvas.width + x) * 4;
             // r
-            buf[scene_pixel_index] = STATE.floor[tex_pixel_index] * brightness_coeff;
+            buf[scene_pixel_index] = STATE.floor[tex_pixel_index] * brightness;
             // g
-            buf[scene_pixel_index+1] = STATE.floor[tex_pixel_index+1] * brightness_coeff;
+            buf[scene_pixel_index+1] = STATE.floor[tex_pixel_index+1] * brightness;
             // b
-            buf[scene_pixel_index+2] = STATE.floor[tex_pixel_index+2] * brightness_coeff;
+            buf[scene_pixel_index+2] = STATE.floor[tex_pixel_index+2] * brightness;
             // a
             buf[scene_pixel_index+3] = 255;
         }
@@ -251,25 +251,26 @@ function render_walls(){
     for(let i = 0; i < canvas.width; i++){
         let hit = STATE.ray_hits[i];
         if(hit.block){
+            // console.log(hit.perp_dist, hit.dist, hit.dist / hit.perp_dist)
             const texture = TEXTURES.Walls[STATE.Scene[hit.block.y][hit.block.x]].img;
-            let texture_x = hit.side == "HORIZONTAL" ? hit.hit.x - hit.block.x : hit.hit.y - hit.block.y;
+            let texture_x = hit.side == "HORIZONTAL" ? hit.hit_text_cords.x - hit.block.x : hit.hit_text_cords.y - hit.block.y;
             texture_x *= texture.width;
-            // Magic Number <0.7>, I DON'T KNOW WHY THE FUCK IT WORKS.
-            const wall_height = Math.ceil((canvas.height * 0.7) / hit.perp_dist);
+            const center_hit = cast_ray(0); 
+            const aspect_correction = center_hit.perp_dist / center_hit.dist;
+            const wall_height = Math.ceil((canvas.height * aspect_correction) / hit.perp_dist);
             const x = i; 
             const y = canvas.height/2 - wall_height/2;
             ctx.drawImage(texture, texture_x, 0, 1, texture.height, x, y, 1, wall_height)
-
             if(hit.side == "HORIZONTAL"){
-                ctx.fillStyle = `rgba(0, 0, 0, 0.5)`;
+                ctx.fillStyle = `rgba(0, 0, 0, 0.2)`;
                 ctx.fillRect(x, y, 1, wall_height);
             }
 
             // darken based on distance
-            let max_vision = 2;
-            let darkness_coeff = Math.min(hit.dist/max_vision, 0.8); 
+            let max_vision = 3;
+            let darkness_coeff = Math.min(hit.dist/max_vision ** (1/2), 0.98); 
             ctx.fillStyle = `rgba(0, 0, 0, ${darkness_coeff})`;
-            ctx.fillRect(x, y, 1, wall_height);
+            ctx.fillRect(x, y-1, 1, wall_height+1);
         }
     }
 }
@@ -326,7 +327,7 @@ function game_loop(ctime){
             throw new Error("Ray casting failed for some reason.")
         }
     }
-
+    // console.log(STATE.Player.plane.dist(new Vector2(0, 0)))
     render_floor();
     render_walls();
     minimap(50, 50)
