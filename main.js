@@ -28,7 +28,6 @@ let TEXTURES_COLLECTION = {
     "shotgun-reload": new Array(61).fill("").map((_, k)=> {
          return (new Sprite("sprites/SG-Reload/" + (k).toString().padStart(4, '0') + ".png"));
     }),
-
     "ar-idle": [
         new Sprite("sprites/ar-idle.png"),
     ],
@@ -37,15 +36,15 @@ let TEXTURES_COLLECTION = {
     }),
     "ar-reload": new Array(61).fill("").map((_, k)=> {
          return (new Sprite("sprites/AR-Reload/" + (k).toString().padStart(4, '0') + ".png"));
-    })
+    }),
 };
-const WEAPONS = [{name: "Shotgun", fire_time: 0.3, reload_time: 0.9, recoil: 0.02}, {name: "AR", fire_time: 0, reload_time: 0.9, recoil: 0.01}];
 let TEXTURES = {
     Floor: null,
     Walls: [],
     Weapons: Object(),
 };
 
+const WEAPONS = [{name: "Shotgun", fire_time: 0.3, reload_time: 0.9, recoil: 0.02}, {name: "AR", fire_time: 0, reload_time: 0.9, recoil: 0.01}];
 for(wp of WEAPONS){
     TEXTURES.Weapons[wp.name] = {
         Idle: [],
@@ -71,6 +70,7 @@ class Vector2{
     dist(that){return Math.sqrt(((that.y - this.y)**2) + ((that.x - this.x)**2))};
     dist_sq(that){return (((that.y - this.y)**2) + ((that.x - this.x)**2))};
     normalize(){return this.scale(1/this.dist(new Vector2(0, 0)));}
+    dot(that){return (this.x * that.x + this.y * that.y)}
     rotate(deg){
         let c = Math.cos(deg);
         let s = Math.sin(deg);
@@ -394,11 +394,8 @@ function lines_intersect_2d(p0, p1, p2, p3) {
     let s10_y = p1.y - p0.y;
     let s32_x = p3.x - p2.x;
     let s32_y = p3.y - p2.y;
-
     let denom = s10_x * s32_y - s32_x * s10_y;
-
     if (denom == 0) return null;
-
     let denom_is_positive = denom > 0
 
     let s02_x = p0.x - p2.x;
@@ -407,10 +404,9 @@ function lines_intersect_2d(p0, p1, p2, p3) {
     let s_numer = s10_x * s02_y - s10_y * s02_x;
 
     if ((s_numer < 0) == denom_is_positive) return null;
-
     let t_numer = s32_x * s02_y - s32_y * s02_x;
 
-    if ((t_numer < 0) == denom_is_positive) return None;
+    if ((t_numer < 0) == denom_is_positive) return null;
 
     if ((s_numer > denom) == denom_is_positive || (t_numer > denom) == denom_is_positive) return null; 
 
@@ -418,18 +414,18 @@ function lines_intersect_2d(p0, p1, p2, p3) {
     let intersection_point = { x: p0.x + (t * s10_x), y: p0.y + (t * s10_y)}
     return intersection_point
 }
+
 function render_enemies(){
     const center_hit = cast_ray(0); 
     const Player = STATE.Player;
     for(let e of STATE.Enemy){
         const a = Player.dir_vector.add(Player.plane.scale(-1));
         const c = Player.dir_vector.add(Player.plane);
-        const b = { y: (e.y - Player.position.y), x: (e.x - Player.position.x)};
+        const b = e.sub(Player.position);
         const cross = (a, b) => (a.y * b.x - a.x * b.y);
-        STATE.highlight = null;
         if(cross(a, b) * cross(a, c) >= 0 && cross(c, b) * cross(c, a) >= 0 ){
             const intersect = lines_intersect_2d(
-                Player.position, e, 
+                Player.position, b.scale(100), 
                 Player.position.add(a), 
                 Player.position.add(c)
             )
@@ -437,11 +433,11 @@ function render_enemies(){
                 const dist = Player.position.dist(e);
                 const cut_plane_in_ratio = Player.position.add(a).dist(intersect);
                 const pos = cast_ray(null, cut_plane_in_ratio - 1);
-                if( dist <= pos.dist){
+                if(dist <= pos.dist){
                     const sx = cut_plane_in_ratio * canvas.width/2;
                     const aspect_correction = center_hit.perp_dist / center_hit.dist;
-                    const height = Math.ceil((canvas.height * aspect_correction) / dist);
-                    STATE.highlight = pos.hit_cords; 
+                    STATE.highlight = b.dot(Player.dir_vector)
+                    const height = Math.ceil((canvas.height * aspect_correction) / b.dot(Player.dir_vector));
                     const y = canvas.height/2 - height/2;
                     ctx.fillStyle = "red";
                     ctx.fillRect(sx, y, 1, height)
@@ -524,6 +520,7 @@ function game_loop(ctime){
     render_walls();
     render_enemies();
     render_weapon(ctime);
+    // minimap(150, 150)
     minimap(50, 50)
     last_frame = ctime;
     requestAnimationFrame(game_loop)
