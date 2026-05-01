@@ -37,11 +37,16 @@ let TEXTURES_COLLECTION = {
     "ar-reload": new Array(61).fill("").map((_, k)=> {
          return (new Sprite("sprites/AR-Reload/" + (k).toString().padStart(4, '0') + ".png"));
     }),
+    "enemy-idle": new Array(61).fill("").map((_, k)=> {
+         return (new Sprite("sprites/Enemy/IDLEING/S/STORMTROOPER" + (k).toString().padStart(4, '0') + ".png"));
+    })
 };
+
 let TEXTURES = {
     Floor: null,
     Walls: [],
     Weapons: Object(),
+    Enemy: {},
 };
 
 const WEAPONS = [{name: "Shotgun", fire_time: 0.3, reload_time: 0.9, recoil: 0.02}, {name: "AR", fire_time: 0, reload_time: 0.9, recoil: 0.01}];
@@ -116,7 +121,10 @@ let COLS;
 let ROWS;
 let STATE = {
     Enemy: [
-        new Vector2(10.5, 2.5)
+        {
+            pos: new Vector2(10.5, 2.5),
+            frame_counter: 0,
+        },
     ],
     highlight: {},
     keys: {
@@ -274,7 +282,7 @@ function minimap(w, h){
     } 
     draw_circle(P.position.add(P.dir_vector.add(P.plane)), 0.2, "cyan")
     for(let e of STATE.Enemy){
-        draw_circle(e, 0.2, "cyan")
+        draw_circle(e.pos, 0.2, "cyan")
     }
     if(STATE.highlight){
         draw_line(Player.position, STATE.highlight, "blue");
@@ -418,29 +426,55 @@ function lines_intersect_2d(p0, p1, p2, p3) {
 function render_enemies(){
     const center_hit = cast_ray(0); 
     const Player = STATE.Player;
+    const a = Player.dir_vector.add(Player.plane.scale(-1));
+    const c = Player.dir_vector.add(Player.plane);
+    const cross = (a, b) => (a.y * b.x - a.x * b.y);
+    const t_x = 200; const t_y = 110; const t_w = 125; const t_h = 335; 
     for(let e of STATE.Enemy){
-        const a = Player.dir_vector.add(Player.plane.scale(-1));
-        const c = Player.dir_vector.add(Player.plane);
-        const b = e.sub(Player.position);
-        const cross = (a, b) => (a.y * b.x - a.x * b.y);
-        if(cross(a, b) * cross(a, c) >= 0 && cross(c, b) * cross(c, a) >= 0 ){
+        const b = e.pos.sub(Player.position);
+        if(cross(a, b) * cross(a, c) >= 0 && cross(c, b) * cross(c, a) >= 0){
             const intersect = lines_intersect_2d(
                 Player.position, b.scale(100), 
                 Player.position.add(a), 
                 Player.position.add(c)
             )
             if(intersect){
-                const dist = Player.position.dist(e);
+                const dist = Player.position.dist(e.pos);
                 const cut_plane_in_ratio = Player.position.add(a).dist(intersect);
                 const pos = cast_ray(null, cut_plane_in_ratio - 1);
                 if(dist <= pos.dist){
-                    const sx = cut_plane_in_ratio * canvas.width/2;
+                    if(TEXTURES.Enemy.Idle.length <= e.frame_counter) e.frame_counter = 0;
                     const aspect_correction = center_hit.perp_dist / center_hit.dist;
-                    STATE.highlight = b.dot(Player.dir_vector)
-                    const height = Math.ceil((canvas.height * aspect_correction) / b.dot(Player.dir_vector));
-                    const y = canvas.height/2 - height/2;
-                    ctx.fillStyle = "red";
-                    ctx.fillRect(sx, y, 1, height)
+                    let sp_h = Math.ceil((canvas.height * aspect_correction) / b.dot(Player.dir_vector));
+                    let sp_w = Math.ceil(sp_h/2.5);
+                    const sx = cut_plane_in_ratio * canvas.width/2 - sp_w/2;
+                    const sy = canvas.height/2 - sp_h/2;
+                    const texture = TEXTURES.Enemy.Idle[e.frame_counter].img;
+                    ctx.drawImage(texture, t_x, t_y, t_w, t_h, sx, sy, sp_w, sp_h)
+
+                    const offscreen = document.createElement("canvas");
+                    const ctx_off = offscreen.getContext("2d");
+                    offscreen.width = sp_w;
+                    offscreen.height = sp_h;
+                    ctx_off.drawImage( texture, t_x, t_y, t_w, t_h, 0, 0, sp_w, sp_h );
+                    let max_vision = 2; 
+                    let darkness_coeff = Math.min((max_vision/dist) ** (2), 1); 
+                    const enemy_data = ctx_off.getImageData(0, 0, offscreen.width, offscreen.height).data;
+                    const saved = ctx.getImageData(0, 0, canvas.width, canvas.height).data;                   
+                    let offset = Math.floor(sy) * canvas.width + Math.floor(sx);
+                    for(let ptr = 0, pixel = 0; pixel < offscreen.height * offscreen.width; ptr+=4, pixel++){
+                        let r = enemy_data[ptr];
+                        let g = enemy_data[ptr + 1];
+                        let b = enemy_data[ptr + 2];
+                        let a = enemy_data[ptr + 3];
+                        if(0<r || 0<g || 0<b || 0<a){
+                            let canvas_ptr = (offset + (Math.floor(pixel/offscreen.width) * canvas.width) + Math.floor(pixel % offscreen.width))*4;
+                            saved[canvas_ptr + 3] = a * darkness_coeff;
+                        }
+                    }
+                    const data = new ImageData(saved, canvas.width, canvas.height)
+                    ctx.putImageData(data, 0, 0);
+                    e.frame_counter++;
                 }
             }
         };
@@ -537,7 +571,7 @@ async function main(){
     TEXTURES.Weapons[WEAPONS[1].name].Idle = TEXTURES_COLLECTION["ar-idle"];
     TEXTURES.Weapons[WEAPONS[1].name].Fire = TEXTURES_COLLECTION["ar-fire"];
     TEXTURES.Weapons[WEAPONS[1].name].Reload = TEXTURES_COLLECTION["ar-reload"];
-
+    TEXTURES.Enemy.Idle = TEXTURES_COLLECTION["enemy-idle"];
     TEXTURES.Walls = TEXTURES.Walls.concat(...new Array(4).fill(TEXTURES_COLLECTION["wall"][0]));
     TEXTURES.Walls = TEXTURES.Walls.concat(...new Array(5).fill(TEXTURES_COLLECTION["wall"][1]));
     TEXTURES.Floor = TEXTURES_COLLECTION["floor"][0];
@@ -593,3 +627,4 @@ async function main(){
     requestAnimationFrame(game_loop)
 };
 main();
+
