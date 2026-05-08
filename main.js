@@ -42,14 +42,28 @@ let TEXTURES_COLLECTION = {
     })
 };
 
+// LOAD ENEMY SPRITES
+const ENEMY_STATE = [["IDLEING", 60], ["WALKING", 40], ["FIRING", 8], ["FALLING", 60]]
+// const DIRECTIONS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+// const DIRECTIONS = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"];
+const DIRECTIONS = ["S", "SE", "E", "NE", "N", "NW", "W", "SW"];
+for(state of ENEMY_STATE){
+    for(dir of DIRECTIONS){
+        TEXTURES_COLLECTION[`Enemy-${state[0]}-${dir}`] = [];
+        for(let x = 1; x <= 5; x++){
+            TEXTURES_COLLECTION[`Enemy-${state[0]}-${dir}`].push(new Sprite(`sprites/Enemy/${state[0]}/${dir}/STORMTROOPER${(x).toString().padStart(4, '0')}.png`));
+        }
+    }
+}
+
 let TEXTURES = {
     Floor: null,
     Walls: [],
     Weapons: Object(),
     Enemy: {},
 };
-
 const WEAPONS = [{name: "Shotgun", fire_time: 0.3, reload_time: 0.9, recoil: 0.02}, {name: "AR", fire_time: 0, reload_time: 0.9, recoil: 0.01}];
+
 for(wp of WEAPONS){
     TEXTURES.Weapons[wp.name] = {
         Idle: [],
@@ -71,11 +85,15 @@ class Vector2{
     mul(that) {
         return new Vector2(this.x * that.x, this.y * that.y)
     }
-    scale(that) {return new Vector2(this.x * that,  this.y * that)}
-    dist(that){return Math.sqrt(((that.y - this.y)**2) + ((that.x - this.x)**2))};
+    mag(){return Math.sqrt(this.x * this.x + this.y * this.y)}
+    scale(that) {return new Vector2(this.x * that,  this.y * that)} dist(that){return Math.sqrt(((that.y - this.y)**2) + ((that.x - this.x)**2))};
     dist_sq(that){return (((that.y - this.y)**2) + ((that.x - this.x)**2))};
     normalize(){return this.scale(1/this.dist(new Vector2(0, 0)));}
     dot(that){return (this.x * that.x + this.y * that.y)}
+    cross(that){return (this.y * that.x - this.x * that.y)};
+    unsigned_angle_cos(that){
+        return (this.dot(that)/(this.mag()*that.mag()))
+    }
     rotate(deg){
         let c = Math.cos(deg);
         let s = Math.sin(deg);
@@ -86,9 +104,54 @@ class Vector2{
         )
     }
     block_index(){return new Vector2(Math.floor(this.x), Math.floor(this.y))}
+    get_octant(){
+        let vect = this.rotate(-Math.PI/8);
+        const x = vect.x;
+        const y = vect.y;
+        const octates = [
+            [ // vert more
+                [ // positive y
+                    1,  // positive x
+                    2  // negative x
+                ],
+                [ // negative y
+                    6,  // positive x
+                    5   // negative x
+                ]
+            ], 
+            [ // hor more
+                [ // positive y
+                    0,  // positive x
+                    3   // negative x
+                ],
+                [ // negative y
+                    7,  // positive x
+                    4   // negative x
+                ]
+            ], 
+        ]
+        return octates[+(Math.abs(y)<Math.abs(x))][+(y<0)][+(x<0)];
+    }
 }
 
+class Enemy {
+    pos;
+    dir;
+    dir_vector;
+    state = "IDLEING";
+    frame_counter = 0;
+    constructor(x, y){
+        this.pos = new Vector2(x, y);
+        this.dir = 2 * Math.PI * Math.random();
+        this.dir_vector = new Vector2(Math.cos(this.dir), Math.sin(this.dir));
 
+    }
+    rel_direction(Player){
+        this.dir_vector = new Vector2(Math.cos(this.dir), Math.sin(this.dir));
+        const angle_rel = Player.position.sub(this.pos).normalize();
+        return DIRECTIONS[(angle_rel.get_octant() - this.dir_vector.normalize().get_octant() + 8) % 8];
+    }
+}
 class Player {
     speed;
     position;
@@ -108,6 +171,7 @@ class Player {
     constructor (position, dir){
         this.position = position;
         this.dir = dir;
+        this.dir_vector = new Vector2(Math.cos(Player.dir), Math.sin(Player.dir));
         this.plane = new Vector2(0, Math.tan(this.fov/2));
         this.speed = this.normal_speed;
     }
@@ -120,12 +184,10 @@ canvas.style.imageRendering = "pixelated";
 let COLS;
 let ROWS;
 let STATE = {
-    Enemy: [
-        {
-            pos: new Vector2(10.5, 2.5),
-            frame_counter: 0,
-        },
-    ],
+    Enemy: [],
+    // "shotgun-fire": new Array(10).fill("").map((_, k)=> {
+    //      return (new Sprite("sprites/SG-Fire/" + (k).toString() + ".png"));
+    // }),
     highlight: {},
     keys: {
         keya: false, 
@@ -134,6 +196,8 @@ let STATE = {
         keyd: false,
         keyr: false,
         keyq: false,
+        arrowleft: false,
+        arrowright: false
     }
 };
 
@@ -272,18 +336,21 @@ function minimap(w, h){
         }
     }
 
-    // the fov 
-    draw_circle(P.position, 0.2, "red")
-    draw_circle(P.position.add(P.dir_vector), 0.2, "red")
-    draw_circle(P.position.add(P.dir_vector.add(P.plane)), 0.2, "cyan")
-    draw_circle(P.position.add(P.dir_vector.add(P.plane.scale(-1))), 0.2, "cyan")
+    const a = P.position.add(P.plane);
+    const c = P.position.add(P.plane.scale(-1));
+    const b = P.position.add(P.dir_vector);
+    draw_line(b, a, "yellow");
+    draw_line(b, c, "yellow");
+    draw_line(a, c, "yellow");
+
     for(hit of STATE.ray_hits){
         draw_circle(hit.hit_cords, 0.2, "cyan")
     } 
-    draw_circle(P.position.add(P.dir_vector.add(P.plane)), 0.2, "cyan")
-    for(let e of STATE.Enemy){
-        draw_circle(e.pos, 0.2, "cyan")
-    }
+    // for(let e of STATE.Enemy){
+    //     draw_circle(e.pos, 0.2, "cyan")
+    //     draw_line(e.pos, e.pos.add(e.dir_vector), "yellow");
+    //
+    // }
     if(STATE.highlight){
         draw_line(Player.position, STATE.highlight, "blue");
         draw_circle(STATE.highlight, 0.4, "pink")
@@ -423,41 +490,51 @@ function lines_intersect_2d(p0, p1, p2, p3) {
     return intersection_point
 }
 
+// Plan is to draw the sprite over the main canvas, draw darkness as an overlay over it much like how I did in walls.
+// but drawing shadow over the whole sprite gives a rectangular block look, it works in walls because there is not transparency in those sprites.
+// in character sprites, alot of it is transparent and thus we can't do exactly how we did in walls.
+// if only, I can know the exact places which are transparent; I couldn't find how to take data from sprites directly in JS so.
+// > first put that sprite on a off-screen canvas, 
+// > take data of that canvas, much like the similar thing in floor but for a different reason 
+// > scan the pixel data and look for which has the rgb data of more than 0 (can be cached, will not do, because who cares about optim. anyways)
+// > reduce the pixels alpha channel from the main canvas which corresponds to co-ord found in the previous step
 function render_enemies(){
     const center_hit = cast_ray(0); 
     const Player = STATE.Player;
     const a = Player.dir_vector.add(Player.plane.scale(-1));
     const c = Player.dir_vector.add(Player.plane);
-    const cross = (a, b) => (a.y * b.x - a.x * b.y);
     const t_x = 200; const t_y = 110; const t_w = 125; const t_h = 335; 
+    const offscreen = document.createElement("canvas");
+    const ctx_off = offscreen.getContext("2d");
+
     for(let e of STATE.Enemy){
         const b = e.pos.sub(Player.position);
-        if(cross(a, b) * cross(a, c) >= 0 && cross(c, b) * cross(c, a) >= 0){
+        const dir = e.rel_direction(Player)
+        const textures_arr = TEXTURES.Enemy[e.state][dir];
+        if(textures_arr.length <= e.frame_counter) e.frame_counter = 0;
+        const texture = textures_arr[e.frame_counter].img
+        if(a.cross(b) * a.cross(c) >= 0 && c.cross(b) * c.cross(a) >= 0){
             const intersect = lines_intersect_2d(
-                Player.position, b.scale(100), 
-                Player.position.add(a), 
-                Player.position.add(c)
+                {x: 0, y: 0}, b.scale(5), 
+                a, c
             )
             if(intersect){
-                const dist = Player.position.dist(e.pos);
-                const cut_plane_in_ratio = Player.position.add(a).dist(intersect);
+                const dist = b.mag();
+                const cut_plane_in_ratio = a.dist(intersect);
                 const pos = cast_ray(null, cut_plane_in_ratio - 1);
                 if(dist <= pos.dist){
-                    if(TEXTURES.Enemy.Idle.length <= e.frame_counter) e.frame_counter = 0;
+                    ctx_off.clearRect(0, 0, offscreen.width, offscreen.height);
                     const aspect_correction = center_hit.perp_dist / center_hit.dist;
                     let sp_h = Math.ceil((canvas.height * aspect_correction) / b.dot(Player.dir_vector));
                     let sp_w = Math.ceil(sp_h/2.5);
                     const sx = cut_plane_in_ratio * canvas.width/2 - sp_w/2;
                     const sy = canvas.height/2 - sp_h/2;
-                    const texture = TEXTURES.Enemy.Idle[e.frame_counter].img;
                     ctx.drawImage(texture, t_x, t_y, t_w, t_h, sx, sy, sp_w, sp_h)
 
-                    const offscreen = document.createElement("canvas");
-                    const ctx_off = offscreen.getContext("2d");
                     offscreen.width = sp_w;
                     offscreen.height = sp_h;
                     ctx_off.drawImage( texture, t_x, t_y, t_w, t_h, 0, 0, sp_w, sp_h );
-                    let max_vision = 2; 
+                    let max_vision = 1; 
                     let darkness_coeff = Math.min((max_vision/dist) ** (2), 1); 
                     const enemy_data = ctx_off.getImageData(0, 0, offscreen.width, offscreen.height).data;
                     const saved = ctx.getImageData(0, 0, canvas.width, canvas.height).data;                   
@@ -521,6 +598,7 @@ function game_loop(ctime){
             Player.state = "Switch"
             Player.speed = Player.gun_arm_speed;
         }
+
         if(Player.fire){
             Player.state = "Fire"
             Player.speed = Player.gun_arm_speed;
@@ -562,7 +640,8 @@ function game_loop(ctime){
 
 async function main(){
     for([key, arr] of Object.entries(TEXTURES_COLLECTION)){
-       TEXTURES_COLLECTION[key] = await Promise.all(arr); 
+        console.log(key)
+        TEXTURES_COLLECTION[key] = await Promise.all(arr); 
     }
     TEXTURES.Weapons[WEAPONS[0].name].Idle = TEXTURES_COLLECTION["shotgun-idle"];
     TEXTURES.Weapons[WEAPONS[0].name].Fire = TEXTURES_COLLECTION["shotgun-fire"];
@@ -571,11 +650,18 @@ async function main(){
     TEXTURES.Weapons[WEAPONS[1].name].Idle = TEXTURES_COLLECTION["ar-idle"];
     TEXTURES.Weapons[WEAPONS[1].name].Fire = TEXTURES_COLLECTION["ar-fire"];
     TEXTURES.Weapons[WEAPONS[1].name].Reload = TEXTURES_COLLECTION["ar-reload"];
-    TEXTURES.Enemy.Idle = TEXTURES_COLLECTION["enemy-idle"];
     TEXTURES.Walls = TEXTURES.Walls.concat(...new Array(4).fill(TEXTURES_COLLECTION["wall"][0]));
     TEXTURES.Walls = TEXTURES.Walls.concat(...new Array(5).fill(TEXTURES_COLLECTION["wall"][1]));
     TEXTURES.Floor = TEXTURES_COLLECTION["floor"][0];
 
+    for([key, val] of Object.entries(TEXTURES_COLLECTION)){
+        if(key.includes("Enemy")){
+            // ENEMY-FIRING-SW-0001.png
+            key = key.split("-");
+            if(!TEXTURES.Enemy[key[1]]) TEXTURES.Enemy[key[1]] = {}
+            TEXTURES.Enemy[key[1]][key[2]] = val;
+        }
+    }
     const floor = TEXTURES.Floor.img;
     const offscreen = document.createElement("canvas");
     offscreen.width = floor.width;
@@ -618,6 +704,7 @@ async function main(){
     ];
     COLS = STATE.Scene.length;
     ROWS = STATE.Scene[0].length;
+    STATE.Enemy = new Array(20).fill("").map(e => new Enemy(Math.random() * COLS, Math.random() * ROWS)),
     // STATE.Scene[5][4] = "#ffaf00";
     // for(let i = 0; i < 10; ++i)[
     //     const x = Math.floor(Math.random() * 9);
